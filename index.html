@@ -237,7 +237,23 @@ async function открыть_период(п, пароль) {
   location.href = ссылка;
 }
 
+/* Браузер даёт доступ к шифрованию только на HTTPS (и на localhost).
+   По HTTP crypto.subtle просто не существует, и расшифровка падает
+   с «Cannot read properties of undefined (reading 'importKey')» —
+   человеку это ни о чём не говорит, поэтому проверяем заранее. */
+function шифрование_доступно() {
+  return typeof crypto !== "undefined" && crypto.subtle
+    && typeof DecompressionStream !== "undefined";
+}
+
 document.getElementById("открыть").addEventListener("click", async () => {
+  if (!шифрование_доступно()) {
+    const адрес = location.href.replace(/^http:/, "https:");
+    сказать("Страница открыта по незащищённому соединению (http). "
+      + "Браузер запрещает расшифровку на таких страницах. "
+      + "Откройте адрес с https: " + адрес, true);
+    return;
+  }
   const п = найти(год, кв);
   if (!п) { сказать("Период не выбран", true); return; }
   const пароль = document.getElementById("пароль").value;
@@ -256,4 +272,10 @@ document.getElementById("пароль").addEventListener("keydown", е => {
 });
 
 нарисовать();
+
+/* Предупреждаем сразу, не дожидаясь попытки входа. */
+if (!шифрование_доступно()) {
+  сказать("Эта страница открыта по http — расшифровка здесь работать не будет. "
+    + "Откройте адрес с https в начале.", true);
+}
 </script></body></html>
