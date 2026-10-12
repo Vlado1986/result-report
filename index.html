@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Результат работы</title>
+<style>
+:root{--фон:#f6f7f9;--карта:#fff;--текст:#1a1d21;--тускло:#6b7280;
+  --линия:#e5e7eb;--акцент:#0f62fe;--ошибка:#d1242f;--добро:#0a7d33}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",
+  Roboto,Helvetica,Arial,sans-serif;background:var(--фон);color:var(--текст)}
+#вход{min-height:100vh;display:flex;align-items:center;justify-content:center;
+  padding:24px}
+.карта{background:var(--карта);border:1px solid var(--линия);border-radius:14px;
+  padding:28px;max-width:540px;width:100%;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+h1{margin:0 0 4px;font-size:21px;letter-spacing:-.2px}
+.под{color:var(--тускло);font-size:13px;margin-bottom:22px}
+label{display:block;font-size:12px;color:var(--тускло);margin:0 0 6px;
+  text-transform:uppercase;letter-spacing:.4px}
+.ряд{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+button{font:inherit;cursor:pointer;border:1px solid var(--линия);
+  background:var(--карта);color:var(--текст);border-radius:9px;
+  padding:9px 15px;transition:.12s}
+button:hover:not(:disabled){border-color:#c3c7ce}
+button.выбран{background:var(--акцент);border-color:var(--акцент);color:#fff}
+button.открыт{border-color:var(--добро);color:var(--добро)}
+button.открыт.выбран{background:var(--добро);border-color:var(--добро);
+  color:#fff}
+input{font:inherit;width:100%;padding:11px 13px;border:1px solid var(--линия);
+  border-radius:9px;background:var(--карта);color:var(--текст)}
+input:focus{outline:2px solid var(--акцент);outline-offset:-1px;
+  border-color:var(--акцент)}
+.главная{margin-top:18px;width:100%;background:var(--акцент);
+  border-color:var(--акцент);color:#fff;padding:12px;font-weight:500}
+.главная:disabled{opacity:.55;cursor:default}
+#сообщение{margin-top:14px;font-size:13px;min-height:19px}
+#сообщение.плохо{color:var(--ошибка)}
+.сноска{margin-top:16px;padding-top:14px;border-top:1px solid var(--линия);
+  font-size:12px;color:var(--тускло)}
+</style></head><body>
+
+<div id="вход"><div class="карта">
+  <h1>Результат работы</h1>
+  <div class="под">Прибыль и премии по закрытым заказам</div>
+
+  <label>Год</label>
+  <div class="ряд" id="годы"></div>
+
+  <label>Период</label>
+  <div class="ряд" id="кварталы"></div>
+
+  <label for="пароль">Пароль периода</label>
+  <input id="пароль" type="password" autocomplete="off"
+         placeholder="У каждого квартала свой пароль">
+
+  <button class="главная" id="открыть">Открыть отчёт</button>
+  <div id="сообщение"></div>
+  <div class="сноска">Пароль можно набирать в любой раскладке и любым
+    регистром. Отчёт откроется во всё окно, переключатель периодов будет
+    сверху.</div>
+</div></div>
+
+<script>
+const ПЕРИОДЫ = [{"год": "2025", "кв": "Q1", "подпись": "1 квартал", "файл": "data/2025-Q1.enc"}, {"год": "2025", "кв": "Q2", "подпись": "2 квартал", "файл": "data/2025-Q2.enc"}, {"год": "2025", "кв": "Q3", "подпись": "3 квартал", "файл": "data/2025-Q3.enc"}, {"год": "2025", "кв": "Q4", "подпись": "4 квартал", "файл": "data/2025-Q4.enc"}];
+const ИТЕРАЦИЙ = 200000;
+
+/* Раскладка: что получится, если набрать кириллицу на латинской клавиатуре.
+   Пароль «рк12025» на английской раскладке выйдет «hr12025», и это тоже
+   должно подойти. Поэтому пробуем все варианты по очереди. */
+const ЛАТ = "qwertyuiop[]asdfghjkl;'zxcvbnm,./";
+const КИР = "йцукенгшщзхъфывапролджэячсмитьбю.";
+
+function лат_в_кир(с) {
+  let итог = "";
+  for (const ч of с) {
+    const i = ЛАТ.indexOf(ч);
+    итог += i >= 0 ? КИР[i] : ч;
+  }
+  return итог;
+}
+function кир_в_лат(с) {
+  let итог = "";
+  for (const ч of с) {
+    const i = КИР.indexOf(ч);
+    итог += i >= 0 ? ЛАТ[i] : ч;
+  }
+  return итог;
+}
+function варианты(пароль) {
+  const н = пароль.trim().toLowerCase();
+  return [...new Set([н, лат_в_кир(н), кир_в_лат(н)])];
+}
+
+const годы = [...new Set(ПЕРИОДЫ.map(п => п.год))].sort();
+let год = годы[годы.length - 1];
+let кв = null;
+
+const э = s => String(s).replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]);
+const найти = (г, к) => ПЕРИОДЫ.find(п => п.год === г && п.кв === к) || null;
+const метка = п => `${п.год}-${п.кв}`;
+
+/* Какой период открыть сразу: приходит в адресе после решётки, когда
+   возвращаемся из отчёта по кнопке переключения. */
+(function из_адреса() {
+  const м = (location.hash || "").replace("#", "");
+  if (!/^\d{4}-Q[1-4]$/.test(м)) return;
+  const [г, к] = м.split("-");
+  if (найти(г, к)) { год = г; кв = к; }
+})();
+
+function нарисовать() {
+  document.getElementById("годы").innerHTML = годы.map(г =>
+    `<button class="${г === год ? "выбран" : ""}" onclick="выбрать_год('${г}')">`
+    + `${э(г)}</button>`).join("");
+  const свои = ПЕРИОДЫ.filter(п => п.год === год);
+  if (!свои.some(п => п.кв === кв)) кв = свои.length ? свои[0].кв : null;
+  document.getElementById("кварталы").innerHTML = свои.map(п =>
+    `<button class="${п.кв === кв ? "выбран" : ""}"`
+    + ` onclick="выбрать_кв('${п.кв}')">${э(п.подпись)}</button>`).join("");
+  document.getElementById("открыть").disabled = !найти(год, кв);
+}
+function выбрать_год(г) { год = г; сказать(""); нарисовать(); }
+function выбрать_кв(к) { кв = к; сказать(""); нарисовать(); }
+
+function сказать(текст, плохо) {
+  const э_ = document.getElementById("сообщение");
+  э_.textContent = текст;
+  э_.className = плохо ? "плохо" : "";
+}
+
+/* Ключ из пароля: PBKDF2-SHA256, 48 байт — 32 на AES-256 и 16 на вектор.
+   Ровно то же делает Python при шифровании. */
+async function ключ_из(пароль, соль) {
+  const основа = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(пароль), "PBKDF2", false, ["deriveBits"]);
+  const биты = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: соль, iterations: ИТЕРАЦИЙ, hash: "SHA-256" },
+    основа, 48 * 8);
+  const сырьё = new Uint8Array(биты);
+  const ключ = await crypto.subtle.importKey(
+    "raw", сырьё.slice(0, 32), { name: "AES-CBC" }, false, ["decrypt"]);
+  return { ключ, вектор: сырьё.slice(32) };
+}
+
+async function разжать(буфер) {
+  const поток = new Blob([буфер]).stream().pipeThrough(
+    new DecompressionStream("gzip"));
+  return await new Response(поток).text();
+}
+
+/* Панель переключения вставляется В САМ ОТЧЁТ, перед </body>.
+   Рамку (iframe) не используем: отчёт весит до 17 МБ, в srcdoc такое не
+   влезает, а в отдельной рамке он открывался обрезанным. Так отчёт получает
+   всё окно и ведёт себя точно как файл с рабочего стола. */
+function врезать_панель(html, п) {
+  const кнопки = ПЕРИОДЫ.map(д =>
+    `<button data-период="${д.год}-${д.кв}"`
+    + `${д === п ? ' class="это"' : ""}>${д.кв} ${д.год}</button>`).join("");
+  const блок = `
+<style>
+#шапка-периодов{position:sticky;top:0;z-index:999;display:flex;gap:7px;
+  align-items:center;padding:7px 12px;background:#fff;
+  border-bottom:1px solid #e5e7eb;font:13px -apple-system,BlinkMacSystemFont,
+  "Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow-x:auto;
+  white-space:nowrap;margin:-18px -18px 14px}
+#шапка-периодов .назв{color:#6b7280;margin-right:6px;flex:0 0 auto}
+#шапка-периодов button{font:inherit;cursor:pointer;border:1px solid #e5e7eb;
+  background:#fff;color:#1a1d21;border-radius:8px;padding:5px 11px;
+  flex:0 0 auto}
+#шапка-периодов button.это{background:#0f62fe;border-color:#0f62fe;color:#fff}
+#шапка-периодов .конец{margin-left:auto;flex:0 0 auto}
+</style>
+<script>
+/* Адрес оболочки запоминаем абсолютным: отчёт живёт по blob-ссылке, у неё
+   нет пути, и относительный «/index.html» оттуда не разрешится. */
+var ОБОЛОЧКА_URL=${JSON.stringify(location.origin + location.pathname)};
+document.addEventListener("DOMContentLoaded",function(){
+  var шапка=document.getElementById("шапка-периодов");
+  var обёртка=document.querySelector(".wrap");
+  if(шапка&&обёртка&&шапка.parentElement!==обёртка)
+    обёртка.insertBefore(шапка,обёртка.firstChild);
+  document.querySelectorAll("#шапка-периодов button[data-период]")
+    .forEach(function(б){
+      б.addEventListener("click",function(){
+        location.href=ОБОЛОЧКА_URL + "#" + б.dataset.период;
+      });
+    });
+  var выход=document.getElementById("выйти-периоды");
+  if(выход) выход.addEventListener("click",function(){
+    location.href=ОБОЛОЧКА_URL;
+  });
+});
+<\/script>
+<div id="шапка-периодов">
+  <span class="назв">Результат работы · ${п.подпись} ${п.год}</span>
+  ${кнопки}
+  <span class="конец"><button id="выйти-периоды">Выйти</button></span>
+</div>`;
+  const i = html.lastIndexOf("</body>");
+  return i < 0 ? html + блок : html.slice(0, i) + блок + html.slice(i);
+}
+
+/* Скачиваем шифротекст один раз на период: повторный ввод пароля не должен
+   тянуть мегабайты заново. */
+const сырьё_кэш = new Map();
+async function сырьё(п) {
+  const к = метка(п);
+  if (сырьё_кэш.has(к)) return сырьё_кэш.get(к);
+  const ответ = await fetch(п.файл, { cache: "no-store" });
+  if (!ответ.ok) throw new Error("файл периода не найден на сервере");
+  const всё = new Uint8Array(await ответ.arrayBuffer());
+  сырьё_кэш.set(к, всё);
+  return всё;
+}
+
+async function расшифровать(п, пароль) {
+  const всё = await сырьё(п);
+  const соль = всё.slice(0, 16), тело = всё.slice(16);
+  for (const вар of варианты(пароль)) {
+    const { ключ, вектор } = await ключ_из(вар, соль);
+    let открытое;
+    try {
+      открытое = await crypto.subtle.decrypt(
+        { name: "AES-CBC", iv: вектор }, ключ, тело);
+    } catch (e) { continue; }   // не тот вариант раскладки
+    return await разжать(открытое);
+  }
+  throw new Error("неверный пароль для этого периода");
+}
+
+async function открыть_период(п, пароль) {
+  сказать("Расшифровываю, это займёт секунду…");
+  const html = врезать_панель(await расшифровать(п, пароль), п);
+  сказать("Открываю отчёт…");
+  const ссылка = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  location.href = ссылка;
+}
+
+document.getElementById("открыть").addEventListener("click", async () => {
+  const п = найти(год, кв);
+  if (!п) { сказать("Период не выбран", true); return; }
+  const пароль = document.getElementById("пароль").value;
+  if (!пароль) { сказать("Введите пароль", true); return; }
+  const кн = document.getElementById("открыть");
+  кн.disabled = true;
+  try {
+    await открыть_период(п, пароль);
+  } catch (e) {
+    сказать(e.message || String(e), true);
+    кн.disabled = false;
+  }
+});
+document.getElementById("пароль").addEventListener("keydown", е => {
+  if (е.key === "Enter") document.getElementById("открыть").click();
+});
+
+нарисовать();
+</script></body></html>
